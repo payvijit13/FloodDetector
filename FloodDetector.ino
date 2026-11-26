@@ -1,161 +1,124 @@
+
 #include <ESP32Servo.h>
 
-// ---------- WATER SENSOR PINS ----------
-const int WATER_SENSOR_PINS[4] = {
-  32,  // Water sensor 1
-  33,  // Water sensor 2
-  34,  // Water sensor 3 (monitoring only)
-  35   // Water sensor 4 (monitoring only)
-};
+// Water sensors
+#define WATER_1 32
+#define WATER_2 33
+#define WATER_3 34
 
-// ---------- ULTRASONIC SENSOR PINS ----------
-const int TRIG_PIN = 26;
-const int ECHO_PIN = 27;
+// Ultrasonic sensor
+#define TRIG_PIN 26
+#define ECHO_PIN 27
 
-// ---------- SERVO PINS ----------
-const int SERVO_PINS[4] = {
-  13,  // Servo 1: flood gate/actuator
-  14,  // Servo 2: reserved
-  25,  // Servo 3: reserved
-  23   // Servo 4: reserved
-};
+// Servo motor
+#define SERVO_PIN 25
 
-Servo servos[4];
+// Configuration
+const int WATER_THRESHOLD = 1500;
+const bool WET_WHEN_ABOVE = true;
 
-// ---------- CALIBRATION ----------
-const int WATER_THRESHOLD = 1500; // Adjust after checking Serial Monitor
-const bool WET_WHEN_ABOVE = true; // Set false if wet readings are lower
+const float SENSOR_HEIGHT_MM = 200.0;
+const float ACTIVATE_DEPTH = 55.0;
+const float RESET_DEPTH = 45.0;
 
-const float SENSOR_HEIGHT_MM = 200.0; // Measure and change this!
-const float ACTIVATE_DEPTH_MM = 55.0;
-const float RESET_DEPTH_MM = 45.0;
+Servo floodServo;
 
-// ---------- STATE ----------
-bool servo1Activated = false;
+bool servoActivated = false;
 
-bool isWet(int reading) {
+bool isWet(int value) {
   return WET_WHEN_ABOVE
-           ? reading >= WATER_THRESHOLD
-           : reading <= WATER_THRESHOLD;
+    ? value > WATER_THRESHOLD
+    : value < WATER_THRESHOLD;
 }
 
-float readWaterDepthMM() {
-  // Send a 10 microsecond trigger pulse.
+float getWaterDepth() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(3);
+
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  // Timeout after 30 ms to avoid waiting indefinitely.
-  unsigned long duration = pulseIn(ECHO_PIN, HIGH, 30000UL);
+  unsigned long duration =
+    pulseIn(ECHO_PIN, HIGH, 30000);
 
-  if (duration == 0) {
-    return -1.0; // No valid echo
-  }
+  if (duration == 0) return -1;
 
-  // Speed of sound is approximately 0.343 mm per microsecond.
-  float distanceMM = (duration * 0.343f) / 2.0f;
+  float distanceMM = duration * 0.343 / 2.0;
 
-  if (distanceMM <= 0 || distanceMM > SENSOR_HEIGHT_MM + 100.0f) {
-    return -1.0;
-  }
-
-  float depthMM = SENSOR_HEIGHT_MM - distanceMM;
-
-  if (depthMM < 0) {
-    depthMM = 0;
-  }
-
-  return depthMM;
-}
-
-void setServo1(bool activate) {
-  if (activate) {
-    servos[0].write(90);
-    servo1Activated = true;
-    Serial.println("ACTION: Servo 1 -> 90 degrees");
-  } else {
-    servos[0].write(0);
-    servo1Activated = false;
-    Serial.println("ACTION: Servo 1 -> 0 degrees");
-  }
+  return SENSOR_HEIGHT_MM - distanceMM;
 }
 
 void setup() {
   Serial.begin(115200);
-  analogReadResolution(12);
+
+  pinMode(WATER_1, INPUT);
+  pinMode(WATER_2, INPUT);
+  pinMode(WATER_3, INPUT);
 
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
-  digitalWrite(TRIG_PIN, LOW);
 
-  for (int i = 0; i < 4; i++) {
-    servos[i].setPeriodHertz(50);
-    servos[i].attach(SERVO_PINS[i], 500, 2400);
-    servos[i].write(0);
-  }
+  floodServo.setPeriodHertz(50);
+  floodServo.attach(SERVO_PIN, 500, 2400);
+  floodServo.write(0);
 
-  Serial.println();
-  Serial.println("================================");
-  Serial.println("       FLOOD DETECTOR V1");
-  Serial.println("================================");
-  Serial.println("Waiting for water...");
+  Serial.println("FLOOD DETECTOR V1");
+  Serial.println("System initialized.");
 }
 
 void loop() {
-  int waterReadings[4];
-  bool waterStates[4];
+  int sensor1 = analogRead(WATER_1);
+  int sensor2 = analogRead(WATER_2);
+  int sensor3 = analogRead(WATER_3);
 
-  for (int i = 0; i < 4; i++) {
-    waterReadings[i] = analogRead(WATER_SENSOR_PINS[i]);
-    waterStates[i] = isWet(waterReadings[i]);
-  }
+  // First two sensors detect water
+  bool waterDetected =
+    isWet(sensor1) && isWet(sensor2);
 
-  // The first two sensors are the water-presence confirmation pair.
-  bool waterDetected = waterStates[0] && waterStates[1];
+  // Third sensor monitors water presence
+  bool thirdSensorWet = isWet(sensor3);
 
-  float depthMM = readWaterDepthMM();
+  float depth = getWaterDepth();
 
-  Serial.println("--------------------------------");
+  Serial.println("\n--- FLOOD STATUS ---");
 
-  for (int i = 0; i < 4; i++) {
-    Serial.print("Water sensor ");
-    Serial.print(i + 1);
-    Serial.print(": ");
-    Serial.print(waterReadings[i]);
-    Serial.print(" | ");
-    Serial.println(waterStates[i] ? "WET" : "DRY");
-  }
+  Serial.printf("Water sensor 1: %d\n", sensor1);
+  Serial.printf("Water sensor 2: %d\n", sensor2);
+  Serial.printf("Water sensor 3: %d\n", sensor3);
 
-  Serial.print("Water presence confirmed: ");
-  Serial.println(waterDetected ? "YES" : "NO");
+  Serial.printf("Water detected: %s\n",
+    waterDetected ? "YES" : "NO");
 
-  if (depthMM >= 0) {
-    Serial.print("Measured water depth: ");
-    Serial.print(depthMM, 1);
-    Serial.println(" mm");
+  Serial.printf("Third sensor wet: %s\n",
+    thirdSensorWet ? "YES" : "NO");
+
+  if (depth < 0) {
+    Serial.println("Ultrasonic: NO ECHO");
   } else {
-    Serial.println("Ultrasonic reading: NO VALID ECHO");
+    Serial.printf("Water depth: %.1f mm\n", depth);
   }
 
-  // Fail-safe behavior: no confirmed water or no valid depth reading
-  // returns Servo 1 to its resting position.
-  if (!waterDetected || depthMM < 0) {
-    if (servo1Activated) {
-      setServo1(false);
-    }
-  } else if (!servo1Activated && depthMM >= ACTIVATE_DEPTH_MM) {
-    setServo1(true);
-    Serial.println("WARNING: WATER DEPTH THRESHOLD REACHED");
-  } else if (servo1Activated && depthMM <= RESET_DEPTH_MM) {
-    setServo1(false);
-    Serial.println("Water level has dropped below reset threshold");
+  // Activate only when both detection sensors
+  // and the ultrasonic measurement are valid
+  if (!waterDetected || depth < 0) {
+    servoActivated = false;
+    floodServo.write(0);
+  }
+  else if (!servoActivated && depth >= ACTIVATE_DEPTH) {
+    servoActivated = true;
+    floodServo.write(90);
+    Serial.println("FLOOD THRESHOLD EXCEEDED!");
+  }
+  else if (servoActivated && depth <= RESET_DEPTH) {
+    servoActivated = false;
+    floodServo.write(0);
+    Serial.println("Water level returned to normal.");
   }
 
-  Serial.print("Servo 1 state: ");
-  Serial.println(servo1Activated ? "90 degrees" : "0 degrees");
-  Serial.println("Servos 2, 3 and 4 remain at 0 degrees.");
+  Serial.printf("Servo: %d degrees\n",
+    servoActivated ? 90 : 0);
 
   delay(300);
 }
+
