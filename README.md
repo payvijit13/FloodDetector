@@ -20,15 +20,17 @@ How It Works
 5. When water depth falls to 45 mm or below, the servo returns to 0°.
 6. Water sensor 3 provides an additional water-presence reading.
 
-Pin Configuration
+Water sensor 3 S GPIO 34
+HC-SR04 TRIG   GPIO 26
+HC-SR04 ECHO   GPIO 27*
+Servo Signal   GPIO 25
 
-Component| ESP32 GPIO
-Water Sensor 1| 32
-Water Sensor 2| 33
-Water Sensor 3| 34
-HC-SR04 TRIG| 26
-HC-SR04 ECHO| 27
-Servo Signal| 25
+Power and ground
+All 3 water sensors: VCC → 3.3V, GND → GND.
+HC-SR04: VCC → 5V, GND → GND.
+Servo: external regulated 5V supply; connect its GND to ESP32 GND.
+
+Important: HC-SR04 ECHO outputs 5V. Use a voltage divider before connecting it to GPIO 27.
 
 Thresholds
 
